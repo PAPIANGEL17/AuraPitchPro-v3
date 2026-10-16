@@ -5,7 +5,7 @@
 #include <array>
 
 // ==============================================================================
-// // AUDIO ENGINE - PITCH-SYNCHRONOUS TD-PSOLA + ADVANCED VIBRATO CONTROL
+// // AUDIO ENGINE - ULTRA-FLUID ZERO-LATENCY TD-PSOLA + MIX CONTROL
 // ==============================================================================
 class NaturalPitchEngine
 {
@@ -14,8 +14,8 @@ public:
     {
         (void)maxBlockSize;
         sr = (sampleRate > 8000.0) ? sampleRate : 44100.0;
-        bufferSize = 16384;
-        analysisWindow = 2048;
+        bufferSize = 8192;
+        analysisWindow = 1024;
 
         inputRing.assign(bufferSize, 0.0f);
         lpRing.assign(bufferSize, 0.0f);
@@ -26,8 +26,8 @@ public:
         hopCounter = 0;
         grainPhase = 0.0;
 
-        grainDelayA = 2048.0;
-        grainDelayB = 2048.0;
+        grainDelayA = 1024.0;
+        grainDelayB = 1024.0;
         detectedPeriodSamples = sr / 220.0;
 
         pitchRatio = 1.0f;
@@ -98,15 +98,15 @@ public:
         int halfLen = length / 2;
         std::fill(yinBuffer.begin(), yinBuffer.end(), 0.0f);
 
-        for (int tau = 1; tau < halfLen; ++tau)
+        for (int tau = 1; tau < halfLen; tau += 2)
         {
             float sum = 0.0f;
-            for (int i = 0; i < halfLen; ++i)
+            for (int i = 0; i < halfLen; i += 2)
             {
                 float delta = lpFrame[i] - lpFrame[i + tau];
                 sum += delta * delta;
             }
-            yinBuffer[tau] = sum;
+            yinBuffer[tau] = sum * 2.0f;
         }
 
         yinBuffer[0] = 1.0f;
@@ -121,7 +121,7 @@ public:
         int maxTau = std::min(halfLen - 2, static_cast<int>(sr / 65.0));
 
         int bestTau = -1;
-        const float threshold = 0.12f;
+        const float threshold = 0.14f;
 
         for (int tau = minTau; tau < maxTau; ++tau)
         {
@@ -145,7 +145,7 @@ public:
                     bestTau = tau;
                 }
             }
-            if (minVal > 0.32f)
+            if (minVal > 0.35f)
             {
                 confidenceOut = 0.0f;
                 return 0.0f;
@@ -176,11 +176,11 @@ public:
     void processBlock(float* channelData, int numSamples,
                       float driftCorrection, float centerSnap,
                       float vibratoPreserve, float transitionSmooth,
-                      float formantShiftSemitones,
+                      float formantShiftSemitones, float mixLevel,
                       int rootNote, int scaleType)
     {
-        const double grainSize = 2048.0;
-        const double baseDelay = 2048.0;
+        const double grainSize = 1024.0;
+        const double baseDelay = 1024.0;
         float lpCutCoeff = static_cast<float>(std::exp(-2.0 * 3.1415926535 * 950.0 / sr));
 
         for (int i = 0; i < numSamples; ++i)
@@ -195,7 +195,7 @@ public:
             float lowBody = 0.78f * inSample + 0.22f * inputRing[prevPos];
             formantResidual[writePos] = inSample - lowBody;
 
-            if (++hopCounter >= 128)
+            if (++hopCounter >= 64)
             {
                 hopCounter = 0;
                 std::vector<float> rawFrame(analysisWindow);
@@ -212,7 +212,7 @@ public:
                 float confidence = 0.0f;
                 float detectedHz = isVoiced ? detectPitchYIN(filteredFrame.data(), analysisWindow, confidence) : 0.0f;
 
-                if (isVoiced && detectedHz >= 65.0f && detectedHz <= 950.0f && confidence > 0.68f)
+                if (isVoiced && detectedHz >= 65.0f && detectedHz <= 950.0f && confidence > 0.65f)
                 {
                     detectedPeriodSamples = std::clamp(sr / static_cast<double>(detectedHz), 40.0, 800.0);
 
@@ -230,11 +230,9 @@ public:
 
                     voicedActive = true;
 
-                    // 1. Separar Centro de Nota (Drift) y Vibrato con control avanzado
-                    float alphaDrift = 0.08f * (1.0f - transitionSmooth * 0.65f);
+                    float alphaDrift = 0.12f * (1.0f - transitionSmooth * 0.5f);
                     pitchCenter = (1.0f - alphaDrift) * pitchCenter + alphaDrift * cleanMidi;
 
-                    // Si vibratoPreserve < 1.0, reduce natural vibrato; si > 1.0, amplifica el vibrato artísticamente
                     float naturalVibrato = std::clamp(cleanMidi - pitchCenter, -1.5f, 1.5f);
                     if (vibratoPreserve > 1.0f)
                     {
@@ -249,7 +247,7 @@ public:
                     float candidateTarget = findClosestScaleNote(pitchCenter, rootNote, scaleType);
                     if (std::abs(candidateTarget - lastTargetMidi) > 0.4f)
                     {
-                        int requiredHold = 1 + static_cast<int>(transitionSmooth * 3.0f);
+                        int requiredHold = 1 + static_cast<int>(transitionSmooth * 2.0f);
                         if (++noteHoldCounter >= requiredHold)
                         {
                             lastTargetMidi = candidateTarget;
@@ -275,7 +273,7 @@ public:
 
                     float rawRatio = std::clamp(correctedHz / cleanDetectedHz, 0.72f, 1.40f);
 
-                    float glideCoeff = 0.45f + 0.45f * (1.0f - transitionSmooth);
+                    float glideCoeff = 0.55f + 0.35f * (1.0f - transitionSmooth);
                     pitchRatio = (1.0f - glideCoeff) * pitchRatio + glideCoeff * rawRatio;
 
                     lastDetectedMidi = cleanMidi;
@@ -286,8 +284,8 @@ public:
                 else
                 {
                     voicedActive = false;
-                    pitchRatio = 0.88f * pitchRatio + 0.12f * 1.0f;
-                    centsDeviation *= 0.82f;
+                    pitchRatio = 0.85f * pitchRatio + 0.15f * 1.0f;
+                    centsDeviation *= 0.80f;
                 }
             }
 
@@ -307,8 +305,8 @@ public:
             }
 
             double pitchStep = 1.0 - static_cast<double>(pitchRatio);
-            grainDelayA = std::clamp(grainDelayA + pitchStep, 64.0, static_cast<double>(bufferSize - 256));
-            grainDelayB = std::clamp(grainDelayB + pitchStep, 64.0, static_cast<double>(bufferSize - 256));
+            grainDelayA = std::clamp(grainDelayA + pitchStep, 32.0, static_cast<double>(bufferSize - 128));
+            grainDelayB = std::clamp(grainDelayB + pitchStep, 32.0, static_cast<double>(bufferSize - 128));
 
             double phaseB = std::fmod(grainPhase + 0.5, 1.0);
             float winA = 0.5f * (1.0f - std::cos(2.0f * 3.1415926535f * static_cast<float>(grainPhase)));
@@ -321,12 +319,14 @@ public:
             float delayedDry  = inputRing[(writePos - static_cast<int>(baseDelay) + bufferSize) % bufferSize];
             float delayedAir  = formantResidual[(writePos - static_cast<int>(baseDelay) + bufferSize) % bufferSize];
 
-            float outSample = delayedDry;
+            float wetSample = delayedDry;
             if (voicedActive || std::abs(pitchRatio - 1.0f) > 0.002f)
             {
                 float formantSculpt = (formantGain - 1.0f) * 0.35f;
-                outSample = pitchedVocal + delayedAir * formantSculpt;
+                wetSample = pitchedVocal + delayedAir * formantSculpt;
             }
+
+            float outSample = (1.0f - mixLevel) * delayedDry + mixLevel * wetSample;
 
             channelData[i] = outSample;
             writePos = (writePos + 1) % bufferSize;
@@ -362,29 +362,12 @@ private:
     }
 
     double sr = 44100.0;
-    int bufferSize = 16384;
-    int analysisWindow = 2048;
+    int bufferSize = 8192;
+    int analysisWindow = 1024;
     std::vector<float> inputRing, lpRing, formantResidual, yinBuffer;
     int writePos = 0;
     int hopCounter = 0;
 
     double grainPhase = 0.0;
-    double grainDelayA = 2048.0;
-    double grainDelayB = 2048.0;
-    double detectedPeriodSamples = 200.0;
-
-    float pitchRatio = 1.0f;
-    float pitchCenter = 62.0f;
-    float lastTargetMidi = 62.0f;
-    float PureScaleNoteMidi = 62.0f;
-    int noteHoldCounter = 0;
-
-    bool voicedActive = false;
-    float lastDetectedMidi = 62.0f;
-    float lastTargetNoteMidi = 62.0f;
-    float centsDeviation = 0.0f;
-    float lpState = 0.0f;
-
-    std::array<float, 5> medianHistory { 62.0f, 62.0f, 62.0f, 62.0f, 62.0f };
-    int medianIdx = 0;
-};
+    double grainDelayA = 1024.0;
+    double grainDelayB =
