@@ -128,7 +128,7 @@ private:
     std::unique_ptr<juce::FileChooser> fileChooser;
 
     float displayedCenterMidi = 62.0f;
-    jucieImageLogoLoaded = false;
+    bool logoLoaded = false;
     juce::Image logoImage;
 
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
