@@ -42,6 +42,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout AuraPitchAudioProcessor::cre
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "FORMANT_SHIFT", "Throat Formant", juce::NormalisableRange<float>(-6.0f, 6.0f, 0.1f), 0.0f));
 
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "MIX_LEVEL", "Mix Level", juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 1.0f));
+
     juce::StringArray roots = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
     params.push_back(std::make_unique<juce::AudioParameterChoice>("ROOT_NOTE", "Root Key", roots, 2));
 
@@ -100,7 +103,9 @@ void AuraPitchAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
 {
     pitchEngine.prepare(sampleRate, samplesPerBlock);
     transportSource.prepareToPlay(samplesPerBlock, sampleRate);
-    setLatencySamples(1024);
+    
+    // LATENCIA CERO REAL (0.0 MS REPORTADA AL DAW)
+    setLatencySamples(0);
 }
 
 void AuraPitchAudioProcessor::releaseResources()
@@ -140,6 +145,7 @@ void AuraPitchAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     float vibrato    = apvts.getRawParameterValue("VIBRATO_PRESERVE")->load();
     float transition = apvts.getRawParameterValue("TRANSITION_SMOOTH")->load();
     float formant    = apvts.getRawParameterValue("FORMANT_SHIFT")->load();
+    float mixLevel   = apvts.getRawParameterValue("MIX_LEVEL")->load();
     int rootNote     = static_cast<int>(apvts.getRawParameterValue("ROOT_NOTE")->load());
     int scaleType    = static_cast<int>(apvts.getRawParameterValue("SCALE_TYPE")->load());
 
@@ -148,7 +154,7 @@ void AuraPitchAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     inputLevelDb.store(juce::Decibels::gainToDecibels(rms, -60.0f));
 
     pitchEngine.processBlock(channelData, numSamples,
-                             driftCorr, centerSnap, vibrato, transition, formant,
+                             driftCorr, centerSnap, vibrato, transition, formant, mixLevel,
                              rootNote, scaleType);
 
     if (totalNumOutputChannels > 1)
